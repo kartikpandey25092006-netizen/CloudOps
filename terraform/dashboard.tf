@@ -30,7 +30,7 @@ resource "aws_cloudwatch_dashboard" "self_healing" {
         type   = "metric"
         x      = 0
         y      = 2
-        width  = 12
+        width  = 8
         height = 6
         properties = {
           metrics = [
@@ -59,12 +59,37 @@ resource "aws_cloudwatch_dashboard" "self_healing" {
         }
       },
 
+      # ── Row 2: EC2 Memory Utilization ────────────────────────────────
+      {
+        type   = "metric"
+        x      = 8
+        y      = 2
+        width  = 8
+        height = 6
+        properties = {
+          metrics = [
+            [
+              "CWAgent", "mem_used_percent",
+              "InstanceId", aws_instance.web_server.id,
+              { stat = "Average", period = 60, label = "Memory %", color = "#9467bd" }
+            ]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = data.aws_region.current.name
+          title   = "🧠 EC2 Memory Utilization"
+          yAxis = {
+            left = { min = 0, max = 100 }
+          }
+        }
+      },
+
       # ── Row 2: EC2 Status Checks ────────────────────────────────────
       {
         type   = "metric"
-        x      = 12
+        x      = 16
         y      = 2
-        width  = 12
+        width  = 8
         height = 6
         properties = {
           metrics = [

@@ -102,8 +102,20 @@ AWS/
 │   ├── dashboard.tf         # CloudWatch dashboard
 │   ├── eventbridge.tf       # EC2 state change rule
 │   └── outputs.tf           # All resource IDs & test commands
+├── docs/                    # Project Context & Architecture Docs
+├── RULES.md                 # AI Development Rules
+├── TASKS.md                 # Prioritized Backlog
 └── README.md
 ```
+
+## Project Documentation
+For an in-depth understanding of the architecture, design, security, and future plans, refer to the `docs/` directory:
+- [ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- [PRD.md](./docs/PRD.md)
+- [SECURITY.md](./docs/SECURITY.md)
+- [TEST_PLAN.md](./docs/TEST_PLAN.md)
+- [DECISIONS.md](./docs/DECISIONS.md)
+- [MEMORY.md](./docs/MEMORY.md)
 
 ---
 

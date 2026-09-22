@@ -60,3 +60,28 @@ resource "aws_lambda_permission" "allow_health_manager_cron" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.health_manager_cron.arn
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EventBridge – 5 Minute Cron for Predictive Failure Detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "aws_cloudwatch_event_rule" "predictor_cron" {
+  name                = "${var.project_name}-predictor-cron"
+  description         = "Triggers predictive failure detection every 5 minutes"
+  schedule_expression = "rate(5 minutes)"
+  tags                = { Project = var.project_name }
+}
+
+resource "aws_cloudwatch_event_target" "predictor_target" {
+  rule      = aws_cloudwatch_event_rule.predictor_cron.name
+  target_id = "${var.project_name}-predictor-target"
+  arn       = aws_lambda_function.predictor.arn
+}
+
+resource "aws_lambda_permission" "allow_predictor_cron" {
+  statement_id  = "AllowEventBridgeInvokePredictor"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.predictor.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.predictor_cron.arn
+}

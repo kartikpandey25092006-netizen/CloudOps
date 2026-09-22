@@ -13,8 +13,6 @@ STATE_TABLE = os.environ.get("STATE_TABLE")
 AUDIT_TABLE = os.environ.get("AUDIT_TABLE")
 OPS_TOPIC_ARN = os.environ.get("OPS_TOPIC_ARN")
 INSTANCE_ID = os.environ.get("INSTANCE_ID")
-INSTANCE_IP = os.environ.get("INSTANCE_IP")
-
 MAX_ATTEMPTS = 3
 STABILIZATION_TIME_SECONDS = 60
 
@@ -90,8 +88,19 @@ def check_ec2_health():
         print(f"Error checking EC2 health: {e}")
         return False, f"Error checking EC2 health: {str(e)}"
 
+def get_instance_ip():
+    try:
+        resp = ec2_client.describe_instances(InstanceIds=[INSTANCE_ID])
+        return resp["Reservations"][0]["Instances"][0].get("PublicIpAddress")
+    except Exception as e:
+        print(f"Error fetching instance IP: {e}")
+        return None
+
 def check_app_health():
-    url = f"http://{INSTANCE_IP}/health"
+    ip = get_instance_ip()
+    if not ip:
+        return False, "Could not determine instance IP"
+    url = f"http://{ip}/health"
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=5) as response:

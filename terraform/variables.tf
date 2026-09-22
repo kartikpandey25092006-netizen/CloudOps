@@ -43,3 +43,9 @@ variable "alert_email" {
   type        = string
   default     = ""
 }
+
+variable "discord_webhook_url" {
+  description = "Discord Webhook URL for ChatOps alerts. Leave empty to skip."
+  type        = string
+  default     = ""
+}

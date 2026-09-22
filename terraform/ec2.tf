@@ -104,4 +104,8 @@ resource "aws_instance" "web_server" {
     Name    = "${var.project_name}-web-server"
     Project = var.project_name
   }
+
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }

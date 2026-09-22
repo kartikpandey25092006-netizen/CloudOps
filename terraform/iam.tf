@@ -105,15 +105,12 @@ resource "aws_iam_role_policy" "lambda_permissions" {
         Action = ["s3:PutObject"]
         Resource = "${aws_s3_bucket.audit_logs.arn}/*"
       },
-      # 3. SSM – send commands to the specific EC2 instance only
+      # 3. SSM – send commands and get command invocation details
       {
-        Sid    = "SSMSendCommand"
+        Sid    = "SSMCommand"
         Effect = "Allow"
-        Action = ["ssm:SendCommand"]
-        Resource = [
-          "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.web_server.id}",
-          "arn:aws:ssm:${data.aws_region.current.name}::document/AWS-RunShellScript"
-        ]
+        Action = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
+        Resource = "*"
       },
       # 4. DynamoDB – write audit logs
       {
@@ -261,6 +258,7 @@ resource "aws_iam_role_policy" "health_manager_permissions" {
         Sid    = "EC2SSMAccess"
         Effect = "Allow"
         Action = [
+          "ec2:DescribeInstances",
           "ec2:DescribeInstanceStatus",
           "ec2:RebootInstances",
           "ssm:SendCommand",
@@ -274,6 +272,56 @@ resource "aws_iam_role_policy" "health_manager_permissions" {
         Effect = "Allow"
         Action = ["sns:Publish"]
         Resource = aws_sns_topic.ops_notifications.arn
+      }
+    ]
+  })
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IAM – Predictor Lambda Execution Role (Predictive Failure Detection)
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "aws_iam_role" "predictor_role" {
+  name = "${var.project_name}-predictor-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "lambda.amazonaws.com" }
+        Action    = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = { Project = var.project_name }
+}
+
+resource "aws_iam_role_policy" "predictor_permissions" {
+  name = "${var.project_name}-predictor-permissions"
+  role = aws_iam_role.predictor_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # 1. CloudWatch Logs
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-predictor:*"
+      },
+      # 2. CloudWatch Metrics – read CPU and Memory data
+      {
+        Sid    = "CloudWatchMetricsRead"
+        Effect = "Allow"
+        Action = ["cloudwatch:GetMetricStatistics"]
+        Resource = "*"
       }
     ]
   })

@@ -1,0 +1,14 @@
+{
+  "phase": "Phase 1 - Baseline",
+  "timestamp": "2026-09-18T04:34:40.253Z",
+  "target": "http://98.91.176.47",
+  "metrics": {
+    "total_requests": 1176,
+    "rps": "9.78",
+    "avg_latency_ms": "279.53",
+    "p50_latency_ms": "0.00",
+    "p95_latency_ms": "317.73",
+    "p99_latency_ms": "0.00",
+    "error_rate": "0.0000"
+  }
+}

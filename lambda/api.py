@@ -2,6 +2,7 @@ import os
 import json
 import boto3
 import datetime
+import math
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key
 
@@ -72,7 +73,15 @@ def handler(event, context):
                 "is_memory_simulating": is_memory_simulating,
                 "audit_logs": audit_logs,
                 "maintenance_mode": maintenance_mode,
-                "healing_state": healing_state
+                "healing_state": healing_state,
+                "health_score": compute_health_score(
+                    cpu=current_cpu,
+                    memory=current_memory,
+                    uptime_seconds=uptime_seconds,
+                    cpu_history=cpu_history,
+                    memory_history=memory_history,
+                    healing_state=healing_state
+                )
             }
             
             return {
@@ -263,3 +272,133 @@ class DecimalEncoder(json.JSONEncoder):
             else:
                 return int(obj)
         return super(DecimalEncoder, self).default(obj)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom Health Score Engine (0–100)
+# ─────────────────────────────────────────────────────────────────────────────
+# This is a CUSTOM-BUILT composite scoring algorithm.
+# AWS does NOT provide a single "health score" — it only gives raw metrics.
+# This engine normalises CPU, Memory, Uptime Stability, Metric Volatility,
+# and Healing State into a single actionable score from 0 (critical) to
+# 100 (perfectly healthy), using weighted averages and penalty curves.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Weights must sum to 1.0
+HEALTH_WEIGHTS = {
+    "cpu":        0.30,   # 30% — current CPU utilisation
+    "memory":     0.25,   # 25% — current memory utilisation
+    "uptime":     0.15,   # 15% — uptime stability (recent reboots penalised)
+    "volatility": 0.15,   # 15% — metric volatility (spikes penalised)
+    "healing":    0.15,   # 15% — recent healing activity (incidents penalised)
+}
+
+def compute_health_score(
+    cpu: float,
+    memory: float,
+    uptime_seconds: int,
+    cpu_history: list,
+    memory_history: list,
+    healing_state: dict
+) -> dict:
+    """Compute a composite health score from 0 (critical) to 100 (healthy).
+    
+    Returns a dict with the overall score, per-component scores, letter grade,
+    and a human-readable status label.
+    """
+
+    # ── 1. CPU Score (100 = idle, 0 = maxed out) ─────────────────────────
+    # Uses inverse exponential: light loads barely reduce score,
+    # but loads above 80% drop the score aggressively.
+    cpu_score = max(0, 100 - (cpu ** 1.5) / 10)
+    cpu_score = round(min(100, cpu_score), 1)
+
+    # ── 2. Memory Score (same curve as CPU) ──────────────────────────────
+    mem_score = max(0, 100 - (memory ** 1.5) / 10)
+    mem_score = round(min(100, mem_score), 1)
+
+    # ── 3. Uptime Stability Score ────────────────────────────────────────
+    # Full score after 1 hour of continuous uptime.
+    # A freshly rebooted instance (< 5 min) gets a low score,
+    # indicating a possible recent crash/recovery.
+    if uptime_seconds >= 3600:
+        uptime_score = 100.0
+    elif uptime_seconds <= 0:
+        uptime_score = 0.0
+    else:
+        # Logarithmic curve: fast climb at first, then flattens
+        uptime_score = round(min(100, (math.log(uptime_seconds + 1) / math.log(3601)) * 100), 1)
+
+    # ── 4. Metric Volatility Score ───────────────────────────────────────
+    # Measures standard deviation of recent CPU & memory values.
+    # High volatility (wild swings) = unstable system = lower score.
+    cpu_values = [dp.get("cpu", 0) for dp in cpu_history if dp.get("cpu", 0) > 0]
+    mem_values = [dp.get("memory", 0) for dp in memory_history if dp.get("memory", 0) > 0]
+
+    cpu_stddev = _stddev(cpu_values) if len(cpu_values) > 1 else 0
+    mem_stddev = _stddev(mem_values) if len(mem_values) > 1 else 0
+    combined_stddev = (cpu_stddev + mem_stddev) / 2
+
+    # Map stddev 0–40 to score 100–0
+    volatility_score = max(0, 100 - (combined_stddev * 2.5))
+    volatility_score = round(min(100, volatility_score), 1)
+
+    # ── 5. Healing State Score ───────────────────────────────────────────
+    # If the system recently healed itself, penalise the score.
+    # A system that hasn't needed healing = 100.
+    healing_score = 100.0
+    for key, state in healing_state.items():
+        status = state.get("status", "UNKNOWN") if isinstance(state, dict) else "UNKNOWN"
+        attempts = int(state.get("attempts", 0)) if isinstance(state, dict) else 0
+        if status in ["DEGRADED", "RECOVERING"]:
+            healing_score -= 30
+        if attempts > 0:
+            healing_score -= min(40, attempts * 15)
+    healing_score = round(max(0, min(100, healing_score)), 1)
+
+    # ── Weighted Composite Score ─────────────────────────────────────────
+    overall = (
+        HEALTH_WEIGHTS["cpu"]        * cpu_score +
+        HEALTH_WEIGHTS["memory"]     * mem_score +
+        HEALTH_WEIGHTS["uptime"]     * uptime_score +
+        HEALTH_WEIGHTS["volatility"] * volatility_score +
+        HEALTH_WEIGHTS["healing"]    * healing_score
+    )
+    overall = round(min(100, max(0, overall)), 1)
+
+    # ── Letter Grade & Status Label ──────────────────────────────────────
+    if overall >= 90:
+        grade, status = "A", "Excellent"
+    elif overall >= 75:
+        grade, status = "B", "Good"
+    elif overall >= 60:
+        grade, status = "C", "Fair"
+    elif overall >= 40:
+        grade, status = "D", "Degraded"
+    else:
+        grade, status = "F", "Critical"
+
+    return {
+        "overall": overall,
+        "grade": grade,
+        "status": status,
+        "components": {
+            "cpu":        {"score": cpu_score,        "weight": HEALTH_WEIGHTS["cpu"],        "raw": round(cpu, 1)},
+            "memory":     {"score": mem_score,         "weight": HEALTH_WEIGHTS["memory"],     "raw": round(memory, 1)},
+            "uptime":     {"score": uptime_score,      "weight": HEALTH_WEIGHTS["uptime"],     "raw": uptime_seconds},
+            "volatility": {"score": volatility_score,   "weight": HEALTH_WEIGHTS["volatility"], "raw": round(combined_stddev, 2)},
+            "healing":    {"score": healing_score,      "weight": HEALTH_WEIGHTS["healing"],    "raw": healing_state},
+        },
+        "algorithm": "weighted_composite_v1",
+        "weights": HEALTH_WEIGHTS,
+    }
+
+
+def _stddev(values: list) -> float:
+    """Calculate standard deviation without importing statistics module."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    mean = sum(values) / n
+    variance = sum((x - mean) ** 2 for x in values) / (n - 1)
+    return math.sqrt(variance)

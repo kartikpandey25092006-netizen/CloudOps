@@ -5,6 +5,14 @@
 terraform {
   required_version = ">= 1.5"
 
+  backend "s3" {
+    bucket         = "self-healing-tfstate-cee9d484"
+    key            = "terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "self-healing-tfstate-locks"
+    encrypt        = true
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"

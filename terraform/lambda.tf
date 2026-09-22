@@ -24,8 +24,9 @@ resource "aws_lambda_function" "remediation" {
 
   environment {
     variables = {
-      AUDIT_BUCKET   = aws_s3_bucket.audit_logs.id
-      DYNAMODB_TABLE = aws_dynamodb_table.audit_logs.name
+      AUDIT_BUCKET        = aws_s3_bucket.audit_logs.id
+      DYNAMODB_TABLE      = aws_dynamodb_table.audit_logs.name
+      DISCORD_WEBHOOK_URL = var.discord_webhook_url
     }
   }
 
@@ -88,7 +89,6 @@ resource "aws_lambda_function" "health_manager" {
       AUDIT_TABLE    = aws_dynamodb_table.audit_logs.name
       OPS_TOPIC_ARN  = aws_sns_topic.ops_notifications.arn
       INSTANCE_ID    = aws_instance.web_server.id
-      INSTANCE_IP    = aws_instance.web_server.public_ip
     }
   }
 
@@ -97,6 +97,44 @@ resource "aws_lambda_function" "health_manager" {
 
 resource "aws_cloudwatch_log_group" "health_manager_logs" {
   name              = "/aws/lambda/${aws_lambda_function.health_manager.function_name}"
+  retention_in_days = 14
+  tags = { Project = var.project_name }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lambda Function – Predictive Failure Detection (Linear Regression Engine)
+# ─────────────────────────────────────────────────────────────────────────────
+
+data "archive_file" "predictor_zip" {
+  type        = "zip"
+  source_file = "${path.module}/../lambda/predictor.py"
+  output_path = "${path.module}/.build/predictor.zip"
+}
+
+resource "aws_lambda_function" "predictor" {
+  function_name    = "${var.project_name}-predictor"
+  description      = "Predictive failure detection using linear regression on CloudWatch metrics"
+  role             = aws_iam_role.predictor_role.arn
+  handler          = "predictor.handler"
+  runtime          = "python3.12"
+  timeout          = 30
+  memory_size      = 128
+
+  filename         = data.archive_file.predictor_zip.output_path
+  source_code_hash = data.archive_file.predictor_zip.output_base64sha256
+
+  environment {
+    variables = {
+      INSTANCE_ID         = aws_instance.web_server.id
+      DISCORD_WEBHOOK_URL = var.discord_webhook_url
+    }
+  }
+
+  tags = { Project = var.project_name }
+}
+
+resource "aws_cloudwatch_log_group" "predictor_logs" {
+  name              = "/aws/lambda/${aws_lambda_function.predictor.function_name}"
   retention_in_days = 14
   tags = { Project = var.project_name }
 }
